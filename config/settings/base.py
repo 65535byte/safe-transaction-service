@@ -610,6 +610,9 @@ ETH_INTERNAL_TX_DECODED_PROCESS_BATCH = env.int(
 ETH_L2_NETWORK = env.bool(
     "ETH_L2_NETWORK", default=not ETHEREUM_TRACING_NODE_URL
 )  # Use L2 event indexing
+SETUP_SAFE_ADDRESSES = env.bool(
+    "SETUP_SAFE_ADDRESSES", default=True
+)  # `setup_service` syncs built-in MasterCopy/ProxyFactory addresses. Set to `false` to skip it, so only manually added addresses are used
 ETH_ZKSYNC_COMPATIBLE_NETWORK = env.bool(
     "ETH_ZKSYNC_COMPATIBLE_NETWORK", default=False
 )  # Fix some issues regarding zkSync compatible networks

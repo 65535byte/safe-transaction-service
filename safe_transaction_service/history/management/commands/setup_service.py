@@ -188,12 +188,18 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("Setting up Safe Contract Addresses"))
         ethereum_client = get_auto_ethereum_client()
         ethereum_network = ethereum_client.get_network()
-        if ethereum_network in MASTER_COPIES:
+        if not settings.SETUP_SAFE_ADDRESSES:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Skipping built-in Safe MasterCopy/ProxyFactory setup "
+                    "(SETUP_SAFE_ADDRESSES is disabled). Only manually added addresses will be used"
+                )
+            )
+        elif ethereum_network in MASTER_COPIES:
             self.stdout.write(
                 self.style.SUCCESS(f"Setting up {ethereum_network.name} safe addresses")
             )
             self._setup_safe_singleton_addresses(MASTER_COPIES[ethereum_network])
-
         else:
             self.stdout.write(
                 self.style.WARNING(
@@ -204,20 +210,21 @@ class Command(BaseCommand):
 
         self._setup_erc20_indexing()
 
-        if ethereum_network in PROXY_FACTORIES:
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"Setting up {ethereum_network.name} proxy factory addresses"
+        if settings.SETUP_SAFE_ADDRESSES:
+            if ethereum_network in PROXY_FACTORIES:
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"Setting up {ethereum_network.name} proxy factory addresses"
+                    )
                 )
-            )
-            self._setup_safe_proxy_factories(PROXY_FACTORIES[ethereum_network])
-        else:
-            self.stdout.write(
-                self.style.WARNING(
-                    f"Setting up {ethereum_network.name} default proxy factory addresses from chain with unknown init block"
+                self._setup_safe_proxy_factories(PROXY_FACTORIES[ethereum_network])
+            else:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Setting up {ethereum_network.name} default proxy factory addresses from chain with unknown init block"
+                    )
                 )
-            )
-            self._setup_safe_proxy_factories_from_chain(ethereum_client)
+                self._setup_safe_proxy_factories_from_chain(ethereum_client)
 
         if not (SafeMasterCopy.objects.count() and ProxyFactory.objects.count()):
             self.stdout.write(
