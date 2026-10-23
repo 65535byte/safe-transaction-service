@@ -1,0 +1,53 @@
+# @NAME@ 链 —— 由 deploy/setup_host_nginx.sh 生成，勿手改
+upstream @NAME@ { server 127.0.0.1:@PORT@; }
+
+server {
+    listen 80;
+    listen [::]:80;      # 域名解析到 AAAA 时也要命中，否则会落到默认站点返回 404
+    server_name @DOMAIN@;
+    # 每栈一份日志，含实际转发到的 upstream（= 127.0.0.1:<本栈端口>），用来确认"域名→栈"没走错
+    access_log /var/log/nginx/safe-tx-@NAME@.access.log safe_tx;
+
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+
+    # Cloudflare 在边缘终结 TLS（加密模式 Flexible）时，源站收到的仍是 http，
+    # 此处若无条件 301 到 https，浏览器就会陷入重定向死循环。
+    # 因此：请求本身已是 https（边缘已终结）→ 直接反代并向下游声明 https；否则才跳转。
+    location / {
+        if ($http_x_forwarded_proto != "https") {
+            return 301 https://$host$request_uri;
+        }
+        proxy_pass http://@NAME@;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # 容器 nginx 与 Django 依赖此头判断 https，勿删
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_redirect off;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name @DOMAIN@;
+    access_log /var/log/nginx/safe-tx-@NAME@.access.log safe_tx;
+
+    ssl_certificate     @CERT@;
+    ssl_certificate_key @KEY@;
+
+    client_max_body_size 20m;
+
+    location / {
+        proxy_pass http://@NAME@;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # 容器 nginx 与 Django 依赖此头判断 https，勿删
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_redirect off;
+    }
+}

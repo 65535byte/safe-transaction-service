@@ -1,69 +1,81 @@
 volumes:
   nginx-shared:
+  # 具名卷：Compose 会加项目名前缀（<COMPOSE_PROJECT_NAME>_pgdata），各栈互相隔离。
+  # 不挂具名卷时 pgdata 落在匿名卷里，一旦 db 容器被重建（改 compose、换镜像）数据就丢了。
+  pgdata:
 
 services:
   nginx:
     image: nginx:alpine
     hostname: nginx
     ports:
-      - "8000:8000"
+      # 单机多栈时每栈改用不同端口，并建议绑 127.0.0.1（见 DEPLOYMENT.md「单机多链部署」）
+      - "${NGINX_HOST_BIND:-0.0.0.0}:${NGINX_HOST_PORT:-80}:8000"
     volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # 多栈共用一份源码：SRC_DIR 由 setup_stack.sh 写进各栈 .env，缺省为项目目录本身
+      - ${SRC_DIR:-.}/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - nginx-shared:/nginx
     depends_on:
       - web
 
   redis:
     image: redis:alpine
-    ports:
-      - "6379:6379"
     healthcheck:
       test: [ "CMD", "redis-cli", "ping"]
+      interval: 5s
       timeout: 5s
-      retries: 3
+      retries: 12
+      start_period: 10s
 
 
   rabbitmq:
     image: rabbitmq:alpine
-    ports:
-      - "5672:5672"
     healthcheck:
       test: rabbitmq-diagnostics -q ping
-      interval: 30s
-      timeout: 30s
-      retries: 3
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
 
   db:
     image: postgres:18-alpine
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+    volumes:
+      # postgres:18 起默认 PGDATA=/var/lib/postgresql/18/docker，镜像 VOLUME 是 /var/lib/postgresql。
+      # 挂到旧的 /var/lib/postgresql/data 会让具名卷落空（数据仍在匿名卷里），务必挂父目录。
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD", "pg_isready"]
+      interval: 5s
       timeout: 5s
-      retries: 3
+      retries: 12
+      start_period: 30s     # 首次启动 initdb 要 20–30s，别在这期间判死
 
   web:
+    image: ${DOCKER_IMAGE:-safe-tx:6.11.0}
     build:
-      context: .
+      context: ${SRC_DIR:-.}
       dockerfile: docker/web/Dockerfile
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 迁移/表未就绪这类竞争无法用 depends_on 表达，靠重启自愈
+    restart: unless-stopped
     working_dir: /app
-    ports:
-      - "8888:8888"
     volumes:
       - nginx-shared:/nginx
     command: docker/web/run_web.sh
 
   indexer-worker: &worker
+    image: ${DOCKER_IMAGE:-safe-tx:6.11.0}
     build:
-      context: .
+      context: ${SRC_DIR:-.}
       dockerfile: docker/web/Dockerfile
     env_file:
       - .env
@@ -71,9 +83,14 @@ services:
       RUN_MIGRATIONS: 1
       WORKER_QUEUES: "default,indexing,processing"
     depends_on:
-      - db
-      - redis
-      - rabbitmq
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    # 迁移/表未就绪这类竞争无法用 depends_on 表达，靠重启自愈
+    restart: unless-stopped
     command: docker/web/celery/worker/run.sh
 
   contracts-tokens-worker:
@@ -83,6 +100,9 @@ services:
 
   scheduler:
     <<: *worker
+    environment:
+      # migrate / setup_service 只由 indexer-worker 执行；并发跑会和它抢锁、报重复键
+      RUN_MIGRATIONS: 0
     command: docker/web/celery/scheduler/run.sh
 
   ganache:
@@ -97,6 +117,9 @@ services:
 
   flower:
     <<: *worker
+    environment:
+      # 同 scheduler：迁移只由 indexer-worker 做
+      RUN_MIGRATIONS: 0
     command: docker/web/celery/flower/run.sh
     ports:
       - "5555:5555"

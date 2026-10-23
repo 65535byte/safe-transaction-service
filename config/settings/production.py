@@ -52,6 +52,8 @@ DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
 SECURE_CONTENT_TYPE_NOSNIFF = env.bool(
     "DJANGO_SECURE_CONTENT_TYPE_NOSNIFF", default=True
 )
+# Trust the outermost proxy: without it CSRF Origin check rejects https requests (request.scheme stays http)
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # https://docs.djangoproject.com/en/5.0/ref/settings/#csrf-trusted-origins
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 # https://docs.djangoproject.com/en/dev/ref/settings/#session-cookie-secure
